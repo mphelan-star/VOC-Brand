@@ -1,0 +1,112 @@
+WITH base_data AS (
+  SELECT
+    Date_Basis AS month,
+    Analysis_Period_Type,
+    Survey_Program,
+    In_Store_Total_NPS,
+    Online_Total_NPS,
+    Web_Total_NPS,
+    App_Total_NPS,
+    Calculated_Weighted_NPS,
+    Everyday_Rewards_NPS_Score_NPS,
+    Supermarkets_And_Metro_Store_Controllable_VOC,
+    BIG_W_Store_Controllable_VOC
+  FROM `gcp-wow-corp-voc-report-dev.GROUP_VOC_NPS.Group_MonthlyRolled`
+  WHERE Analysis_Period_Type = '12 Months Rolling'
+    AND Analysis_Focus = 'Total'
+    AND Date_Basis >= '2025-01-01'
+),
+
+monthly_program_metrics AS (
+  SELECT
+    month,
+    -- AU Food sub-components
+    SUM(CASE WHEN Survey_Program = 'AU Supermarkets' THEN In_Store_Total_NPS END) AS au_supermarkets_in_store,
+    SUM(CASE WHEN Survey_Program = 'AU Supermarkets' THEN Online_Total_NPS END) AS au_supermarkets_online,
+    SUM(CASE WHEN Survey_Program = 'AU Digital App' THEN App_Total_NPS END) AS au_digital_app,
+    SUM(CASE WHEN Survey_Program = 'AU Digital Web' THEN Web_Total_NPS END) AS au_digital_web,
+    SUM(CASE WHEN Survey_Program = 'AU Supermarkets' THEN Supermarkets_And_Metro_Store_Controllable_VOC END) AS au_supermarkets_voc,
+    SUM(CASE WHEN Survey_Program = 'AU Metro' THEN Calculated_Weighted_NPS END) AS au_metro_in_store,
+    SUM(CASE WHEN Survey_Program = 'AU Metro' THEN Supermarkets_And_Metro_Store_Controllable_VOC END) AS au_metro_voc,
+
+    -- NZ Food sub-components
+    SUM(CASE WHEN Survey_Program = 'NZ Supermarkets' THEN In_Store_Total_NPS END) AS nz_supermarkets_in_store,
+    SUM(CASE WHEN Survey_Program = 'NZ Supermarkets' THEN Online_Total_NPS END) AS nz_supermarkets_online,
+    SUM(CASE WHEN Survey_Program = 'NZ Digital App' THEN App_Total_NPS END) AS nz_digital_app,
+    SUM(CASE WHEN Survey_Program = 'NZ Digital Web' THEN Web_Total_NPS END) AS nz_digital_web,
+    SUM(CASE WHEN Survey_Program = 'NZ Supermarkets' THEN Supermarkets_And_Metro_Store_Controllable_VOC END) AS nz_supermarkets_voc,
+
+   -- BIG W sub-components
+    SUM(CASE WHEN Survey_Program = 'BIG W' THEN In_Store_Total_NPS END) AS bigw_supermarkets_in_store,
+    SUM(CASE WHEN Survey_Program = 'BIG W' THEN Online_Total_NPS END) AS bigw_supermarkets_online,
+    SUM(CASE WHEN Survey_Program = 'BigW Digital App' THEN App_Total_NPS END) AS bigw_digital_app,
+    SUM(CASE WHEN Survey_Program = 'BigW Digital Web' THEN Web_Total_NPS END) AS bigw_digital_web,
+    SUM(CASE WHEN Survey_Program = 'BIG W' THEN BIG_W_Store_Controllable_VOC END) AS bigw_supermarkets_voc,
+
+    -- EDR metrics
+    SUM(CASE WHEN Survey_Program = 'NZ Supermarkets' THEN Everyday_Rewards_NPS_Score_NPS END) AS nz_edr_score,
+    SUM(CASE WHEN Survey_Program = 'Everyday AU' THEN Everyday_Rewards_NPS_Score_NPS END) AS au_edr_score,
+
+  FROM base_data
+  GROUP BY month
+),
+
+component_scores AS (
+  SELECT
+    month,
+    -- AU Food: (65% In-Store + 15% Online + 9% App + 6% Web + 5% Metro)
+    (COALESCE(au_supermarkets_in_store, 0) * 0.65) +
+    (COALESCE(au_supermarkets_online, 0) * 0.15) +
+    (COALESCE(au_digital_app, 0) * 0.09) +
+    (COALESCE(au_digital_web, 0) * 0.06) +
+    (COALESCE(au_metro_in_store, 0) * 0.05) AS au_food_nps,
+
+    -- NZ Food: (70% In-Store + 15% Online + 9% App + 6% Web)
+    (COALESCE(nz_supermarkets_in_store, 0) * 0.7) +
+    (COALESCE(nz_supermarkets_online, 0) * 0.15) +
+    (COALESCE(nz_digital_app, 0) * 0.09) +
+    (COALESCE(nz_digital_web, 0) * 0.06) AS nz_food_nps,
+
+    --BIG W: (70% In-Store + 15% Online + 9% App + 6% Web)
+    (COALESCE(bigw_supermarkets_in_store, 0) * 0.7) +
+    (COALESCE(bigw_supermarkets_online, 0) * 0.15) +
+    (COALESCE(bigw_digital_app, 0) * 0.09) +
+    (COALESCE(bigw_digital_web, 0) * 0.06) AS bigw_nps,
+
+    --EDR: (90% AU + 10% NZ)
+    (COALESCE(au_edr_score, 0) * 0.9) +
+    (COALESCE(nz_edr_score, 0) * 0.1) AS edr_nps,
+
+    --VOC: (AU + NZ + Metro + BIG W)
+    (COALESCE(au_supermarkets_voc, 0)) AS au_VOC,
+    (COALESCE(au_metro_voc, 0)) AS metro_VOC,
+    (COALESCE(nz_supermarkets_voc, 0)) AS nz_VOC,
+    (COALESCE(bigw_supermarkets_voc, 0)) AS bigw_VOC,
+
+  FROM monthly_program_metrics
+)
+
+SELECT
+  month,
+  --VOC
+  ROUND(au_VOC, 4) AS au_VOC,
+  ROUND(metro_VOC, 4) AS metro_VOC,
+  ROUND(nz_VOC, 4) AS nz_VOC,
+  ROUND(bigw_VOC, 4) AS bigw_VOC,
+  
+  --NPS
+  ROUND(au_food_nps, 4) AS au_food_nps,
+  ROUND(nz_food_nps, 4) AS nz_food_nps,
+  ROUND(bigw_nps, 4) AS big_w_nps,
+  ROUND(edr_nps, 4) AS edr_nps,
+ 
+  -- Group NPS: (70% AU Food + 10% NZ Food + 10% BIG W + 10% EDR)
+  ROUND(
+    (COALESCE(au_food_nps, 0) * 0.70) +
+    (COALESCE(nz_food_nps, 0) * 0.10) +
+    (COALESCE(bigw_nps, 0) * 0.10) +
+    (COALESCE(edr_nps, 0) * 0.10),
+    4
+  ) AS group_nps
+FROM component_scores
+ORDER BY month ASC;
